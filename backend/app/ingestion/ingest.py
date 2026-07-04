@@ -9,6 +9,14 @@ from app.regions import REGIONS
 
 logger = logging.getLogger(__name__)
 
+# Generous enough to never reject genuine data (PJM, the largest US RTO, has an
+# all-time record around 165,000 MWh/hour) but catches source-data corruption. Found via
+# real EIA glitches: PJM returned values ranging from ~192,000 up to ~2.1 billion MWh for
+# a handful of hours — sanity bounds on external data are not optional, "authoritative"
+# sources can still return garbage.
+MAX_PLAUSIBLE_DEMAND_MWH = 170_000
+MAX_PLAUSIBLE_GENERATION_MWH = 150_000
+
 UPSERT_DEMAND_ACTUAL = """
     INSERT INTO demand (time, region_code, demand_mwh)
     VALUES (%s, %s, %s)
@@ -37,6 +45,17 @@ UPSERT_WEATHER = """
 """
 
 
+UPSERT_REGION = """
+    INSERT INTO regions (region_code, display_name, timezone, weather_lat, weather_lon)
+    VALUES (%s, %s, %s, %s, %s)
+    ON CONFLICT (region_code) DO UPDATE SET
+        display_name = EXCLUDED.display_name,
+        timezone = EXCLUDED.timezone,
+        weather_lat = EXCLUDED.weather_lat,
+        weather_lon = EXCLUDED.weather_lon
+"""
+
+
 def _parse_eia_period(period: str) -> datetime:
     return datetime.strptime(period, "%Y-%m-%dT%H").replace(tzinfo=timezone.utc)
 
@@ -45,20 +64,51 @@ def _parse_iso_hour(value: str) -> datetime:
     return datetime.fromisoformat(value).replace(tzinfo=timezone.utc)
 
 
+def ensure_region_row(conn: psycopg.Connection, region_code: str) -> None:
+    """`REGIONS` in regions.py is the single source of truth; this syncs it into the
+    `regions` table (required for the FK on demand/generation_mix/weather_observations)
+    so adding a region is purely a regions.py edit, never a manual DB step."""
+    region = REGIONS[region_code]
+    with conn.cursor() as cur:
+        cur.execute(
+            UPSERT_REGION,
+            (region.code, region.display_name, region.timezone, region.weather_lat, region.weather_lon),
+        )
+    conn.commit()
+
+
+def _implausible(value: float, max_value: float) -> bool:
+    return value <= 0 or value > max_value
+
+
 def ingest_demand(conn: psycopg.Connection, eia: EIAClient, region_code: str, start: str, end: str) -> int:
-    rows = [
-        (_parse_eia_period(r["period"]), region_code, float(r["value"]))
-        for r in eia.fetch_demand(region_code, start, end)
-        if r.get("value") is not None
-    ]
+    rows = []
+    rejected = 0
+    for r in eia.fetch_demand(region_code, start, end):
+        if r.get("value") is None:
+            continue
+        value = float(r["value"])
+        if _implausible(value, MAX_PLAUSIBLE_DEMAND_MWH):
+            rejected += 1
+            continue
+        rows.append((_parse_eia_period(r["period"]), region_code, value))
+    if rejected:
+        logger.warning("%s: rejected %d implausible actual-demand values from EIA", region_code, rejected)
     with conn.cursor() as cur:
         cur.executemany(UPSERT_DEMAND_ACTUAL, rows)
 
-    forecast_rows = [
-        (_parse_eia_period(r["period"]), region_code, float(r["value"]))
-        for r in eia.fetch_demand_forecast(region_code, start, end)
-        if r.get("value") is not None
-    ]
+    forecast_rows = []
+    rejected = 0
+    for r in eia.fetch_demand_forecast(region_code, start, end):
+        if r.get("value") is None:
+            continue
+        value = float(r["value"])
+        if _implausible(value, MAX_PLAUSIBLE_DEMAND_MWH):
+            rejected += 1
+            continue
+        forecast_rows.append((_parse_eia_period(r["period"]), region_code, value))
+    if rejected:
+        logger.warning("%s: rejected %d implausible demand-forecast values from EIA", region_code, rejected)
     with conn.cursor() as cur:
         cur.executemany(UPSERT_DEMAND_FORECAST, forecast_rows)
 
@@ -70,11 +120,18 @@ def ingest_demand(conn: psycopg.Connection, eia: EIAClient, region_code: str, st
 
 
 def ingest_generation_mix(conn: psycopg.Connection, eia: EIAClient, region_code: str, start: str, end: str) -> int:
-    rows = [
-        (_parse_eia_period(r["period"]), region_code, r["fueltype"], float(r["value"]))
-        for r in eia.fetch_generation_mix(region_code, start, end)
-        if r.get("value") is not None
-    ]
+    rows = []
+    rejected = 0
+    for r in eia.fetch_generation_mix(region_code, start, end):
+        if r.get("value") is None:
+            continue
+        value = float(r["value"])
+        if _implausible(value, MAX_PLAUSIBLE_GENERATION_MWH):
+            rejected += 1
+            continue
+        rows.append((_parse_eia_period(r["period"]), region_code, r["fueltype"], value))
+    if rejected:
+        logger.warning("%s: rejected %d implausible generation-mix values from EIA", region_code, rejected)
     with conn.cursor() as cur:
         cur.executemany(UPSERT_GENERATION, rows)
     conn.commit()

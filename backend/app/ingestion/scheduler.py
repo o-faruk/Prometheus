@@ -8,7 +8,7 @@ from app.clients.eia_client import EIAClient
 from app.clients.weather_client import WeatherClient
 from app.config import get_settings
 from app.db.session import get_connection
-from app.ingestion.ingest import ingest_demand, ingest_generation_mix, ingest_weather_recent
+from app.ingestion.ingest import ensure_region_row, ingest_demand, ingest_generation_mix, ingest_weather_recent
 from app.logging_config import configure_logging
 from app.regions import REGIONS
 
@@ -28,6 +28,7 @@ def run_hourly_ingest() -> None:
     with get_connection() as conn:
         for region_code in REGIONS:
             try:
+                ensure_region_row(conn, region_code)
                 ingest_demand(conn, eia, region_code, start.isoformat(), end.isoformat())
                 ingest_generation_mix(conn, eia, region_code, start.isoformat(), end.isoformat())
                 ingest_weather_recent(conn, weather, region_code, past_days=LOOKBACK_DAYS)

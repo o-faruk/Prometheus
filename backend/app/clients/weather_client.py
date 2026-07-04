@@ -47,6 +47,23 @@ class WeatherClient:
         )
         return self._to_rows(payload)
 
+    def fetch_forecast_hourly(self, lat: float, lon: float, forecast_days: int = 7) -> list[dict]:
+        """Real forward-looking weather forecast (not perfect-foresight actuals) — for live
+        alerting, where we genuinely don't know the future temperature yet. Open-Meteo
+        supports up to 16 forecast days; capped lower here since forecast skill degrades
+        fast past ~7 days and the alert horizon is 24h anyway."""
+        payload = self._get(
+            FORECAST_URL,
+            {
+                "latitude": lat,
+                "longitude": lon,
+                "forecast_days": forecast_days,
+                "hourly": "temperature_2m",
+                "timezone": "UTC",
+            },
+        )
+        return self._to_rows(payload)
+
     @staticmethod
     def _to_rows(payload: dict) -> list[dict]:
         hourly = payload["hourly"]
