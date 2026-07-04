@@ -1,0 +1,68 @@
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: prometheus-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+      - ./backend/app/db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # Deliberately no `ports:` mapping — only reachable from other containers on this
+    # compose network, never exposed to the public internet.
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: prometheus-api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_HOST: timescaledb
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: prometheus-scheduler
+    restart: unless-stopped
+    command: ["python", "-m", "app.ingestion.scheduler"]
+    env_file: .env
+    environment:
+      POSTGRES_HOST: timescaledb
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+
+  caddy:
+    image: caddy:2
+    container_name: prometheus-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./frontend/dist:/srv/frontend:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+
+volumes:
+  timescale_data:
+  caddy_data:
+  caddy_config:

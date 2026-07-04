@@ -26,19 +26,29 @@ def run_hourly_ingest() -> None:
     end = datetime.now(timezone.utc).date()
     start = end - timedelta(days=LOOKBACK_DAYS)
 
-    with get_connection() as conn:
-        for region_code in REGIONS:
-            try:
-                ensure_region_row(conn, region_code)
-                ingest_demand(conn, eia, region_code, start.isoformat(), end.isoformat())
-                ingest_generation_mix(conn, eia, region_code, start.isoformat(), end.isoformat())
-                ingest_weather_recent(conn, weather, region_code, past_days=LOOKBACK_DAYS)
-            except Exception:
-                logger.exception("Hourly ingest failed for region %s", region_code)
+    try:
+        with get_connection() as conn:
+            for region_code in REGIONS:
+                try:
+                    ensure_region_row(conn, region_code)
+                    ingest_demand(conn, eia, region_code, start.isoformat(), end.isoformat())
+                    ingest_generation_mix(conn, eia, region_code, start.isoformat(), end.isoformat())
+                    ingest_weather_recent(conn, weather, region_code, past_days=LOOKBACK_DAYS)
+                except Exception:
+                    logger.exception("Hourly ingest failed for region %s", region_code)
+    except Exception:
+        # get_connection() itself failed (DB unreachable) — nothing was ingested this cycle,
+        # so there's nothing new to score. Log clearly and wait for the next scheduled run
+        # rather than letting a bare connection error look like an unhandled crash.
+        logger.exception("Hourly ingest aborted — could not reach the database")
+        return
 
     # Separate step, separate connection: scoring reads back what ingestion just wrote,
     # so it must run after ingestion commits, not inside the same transaction.
-    score_all_regions()
+    try:
+        score_all_regions()
+    except Exception:
+        logger.exception("Scoring phase failed unexpectedly")
 
 
 def main() -> None:

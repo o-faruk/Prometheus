@@ -1,0 +1,17 @@
+{$DOMAIN} {
+	encode gzip
+
+	# Same-origin in production: the browser talks to /api/* on this exact domain,
+	# so there's no cross-origin request at all — the CORS wildcard the dev-mode API
+	# uses never comes into play here.
+	handle /api/* {
+		uri strip_prefix /api
+		reverse_proxy api:8000
+	}
+
+	handle {
+		root * /srv/frontend
+		try_files {path} /index.html
+		file_server
+	}
+}
