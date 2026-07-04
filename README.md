@@ -6,7 +6,7 @@ backtests three forecasting approaches against each other honestly, serves the w
 forecasts and stress alerts through a live API and dashboard, and — the point of the whole
 exercise — tracks its own accuracy transparently instead of just asserting it.
 
-**Live:** _[URL added after deployment — see Phase 6 in `NOTES.md`]_
+**Live:** https://129.158.44.62.nip.io
 
 ## Problem
 
