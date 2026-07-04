@@ -77,8 +77,19 @@ def ensure_region_row(conn: psycopg.Connection, region_code: str) -> None:
     conn.commit()
 
 
-def _implausible(value: float, max_value: float) -> bool:
-    return value <= 0 or value > max_value
+def _implausible_demand(value: float) -> bool:
+    # A whole balancing authority's demand is never zero or negative — unlike generation
+    # by fuel type, there's no legitimate reading this low.
+    return value <= 0 or value > MAX_PLAUSIBLE_DEMAND_MWH
+
+
+def _implausible_generation(value: float) -> bool:
+    # Zero is completely normal here (e.g. CAISO's coal sits at 0 MWh most hours), and
+    # small-to-moderate negatives are real (self-consumption exceeding output overnight for
+    # solar, or net storage/import effects in the "other" bucket — confirmed against CAISO's
+    # own historical OTH range of roughly -9,500 to +11,000 MWh before picking this bound).
+    # Only reject genuinely absurd magnitude, in either direction.
+    return abs(value) > MAX_PLAUSIBLE_GENERATION_MWH
 
 
 def ingest_demand(conn: psycopg.Connection, eia: EIAClient, region_code: str, start: str, end: str) -> int:
@@ -88,7 +99,7 @@ def ingest_demand(conn: psycopg.Connection, eia: EIAClient, region_code: str, st
         if r.get("value") is None:
             continue
         value = float(r["value"])
-        if _implausible(value, MAX_PLAUSIBLE_DEMAND_MWH):
+        if _implausible_demand(value):
             rejected += 1
             continue
         rows.append((_parse_eia_period(r["period"]), region_code, value))
@@ -103,7 +114,7 @@ def ingest_demand(conn: psycopg.Connection, eia: EIAClient, region_code: str, st
         if r.get("value") is None:
             continue
         value = float(r["value"])
-        if _implausible(value, MAX_PLAUSIBLE_DEMAND_MWH):
+        if _implausible_demand(value):
             rejected += 1
             continue
         forecast_rows.append((_parse_eia_period(r["period"]), region_code, value))
@@ -126,7 +137,7 @@ def ingest_generation_mix(conn: psycopg.Connection, eia: EIAClient, region_code:
         if r.get("value") is None:
             continue
         value = float(r["value"])
-        if _implausible(value, MAX_PLAUSIBLE_GENERATION_MWH):
+        if _implausible_generation(value):
             rejected += 1
             continue
         rows.append((_parse_eia_period(r["period"]), region_code, r["fueltype"], value))
