@@ -183,3 +183,79 @@ All three fired correctly, and CAISO's result lines up with a real, well-known g
 - `find_similar_historical_event`'s pure-temperature matching (no seasonal/day-of-year weighting) is a known simplification, noted above.
 - True capacity-relative stress framing (EIA-860 integration) remains future work, not done here.
 - The plausibility-bound cleanup was reactive (found via the demo, not a proactive audit) — worth a dedicated pass over all three regions' full history before the final case study, in case other EIA glitches are still sitting in the data unnoticed.
+
+---
+
+## Phase 5a — API backend (dashboard frontend pending)
+
+**What's built and verified live:**
+- **Batch-score, serve-from-DB architecture**: two new tables, `forecasts` and `alerts`, written by a new scoring job (`app/forecasting/score.py`) that runs after every hourly ingestion cycle (wired into `scheduler.py`). It fits `LightGBMForecaster` fresh each run and uses Open-Meteo's **real forward-looking forecast** (`fetch_forecast_hourly`, built in Phase 4) for the next 24h — not the perfect-foresight actual-temperature assumption used for backtesting. This closes that long-flagged caveat for the *live* path specifically; backtested accuracy numbers correctly keep the old methodology, since real historical forecast-vs-actual weather isn't available after the fact.
+- A third new table, `model_accuracy`, stores backtest summary rows (one per model per run) so `run_backtest.py`'s results are queryable by the API instead of living only in CSVs.
+- FastAPI app (`app/api/`) with six endpoints, all read-only, all DB-backed, none doing model inference in the request path: `/regions`, `/{region}/current`, `/{region}/forecast`, `/{region}/accuracy`, `/{region}/alerts`, `/{region}/predictions-history`. All tested end-to-end against real data for all three regions.
+- Backtested and stored real `model_accuracy` numbers for ERCOT and PJM (closing a Phase 4 open item) — see below, this changed the story meaningfully.
+
+**Real, important finding — LightGBM does not win everywhere:**
+
+| Region | Best model | LightGBM MAPE | EIA's own forecast MAPE |
+|---|---|---|---|
+| CAISO | LightGBM | **2.94%** | 10.69% |
+| ERCOT | **EIA's own forecast** | 3.08% | **1.99%** |
+| PJM | LightGBM | **2.80%** | 3.69% |
+
+For ERCOT specifically, EIA's own published day-ahead forecast beats our LightGBM model. This is a more credible, useful result than a universal win would have been — ERCOT is widely regarded as having a mature, well-resourced internal forecasting operation (a single-state, tightly-coupled market), which is a plausible explanation, though not confirmed. It also resolves part of the Phase 2/3 "why does EIA's forecast underperform" question: it doesn't, universally — CAISO's specific EIA series is the outlier (10.69% MAPE, far worse than ERCOT's 1.99% or PJM's 3.69%), not EIA forecasting in general. **This is exactly the kind of finding to lead with in the case-study README** — "our model wins 2 of 3 regions, and here's the honest story about the one where it doesn't" is a stronger, more defensible claim than "our model always wins."
+
+**Decisions made and why:**
+- **Batch-score to DB rather than fit-on-request** (explained live before building) — keeps expensive ML compute (~6s per model fit) out of the API request path entirely, matching how production forecasting systems are actually architected (scheduled scoring, not on-demand inference), and proves real service-boundary thinking rather than a monolith that happens to have two folders.
+- **`/predictions-history` matches each resolved hour to the forecast run made closest to 24h before it** (not just "the most recent forecast covering that hour") — approximates genuine day-ahead forecast quality, consistent with how every other accuracy number in this project has been evaluated, rather than silently mixing in same-day short-horizon forecasts which would look artificially better.
+- **A real bug found while wiring live scoring to the backtest-tested `LightGBMForecaster`**: `temperature_future` from a live Open-Meteo pull isn't pre-trimmed to start exactly after `origin` (it starts at local midnight), which collided with `temperature_history` and crashed on a pandas "duplicate labels" error during reindexing. The backtest harness never hit this because it always pre-sliced `temperature_future` to the exact forecast window before calling `predict()`. Fixed inside `LightGBMForecaster.predict()` itself (de-dupe, preferring the actual observation over the forecast for any overlapping hour) rather than pushing the fix onto every caller — the model should be robust to what it's handed, not trust caller discipline.
+
+**What you should understand now (interview-ready):**
+1. **Batch scoring vs. online inference** — a real architectural choice, not just "where do I put the code." Batch scoring trades immediacy (the forecast is at most an hour stale) for a fast, simple, horizontally-scalable read-only API and zero coupling between request latency and model complexity. Online inference trades that staleness away but ties API performance directly to model cost. Most forecasting products (weather, demand, traffic) use batch scoring for exactly this reason.
+2. **A single strong backtest result should make you suspicious, not confident** — Phase 3's "LightGBM wins every horizon bucket" result, run on one region, looked like a clean story. Testing on two more regions immediately surfaced a counterexample. Generalization has to be checked, not assumed, even when — especially when — the first result looks great.
+3. **Why per-region model comparison matters for a multi-region product** — a real deployment might reasonably serve EIA's own forecast for ERCOT and LightGBM for CAISO/PJM; "pick one model for everywhere" is a simplification, and `model_accuracy` being queryable per-region is what makes that kind of decision possible later instead of hardcoded.
+4. **Defensive coding at a function boundary vs. defensive coding at every call site** — the `temperature_future` overlap bug could have been "fixed" by remembering to pre-trim it in `score.py`. Fixing it inside `LightGBMForecaster.predict()` instead means every future caller gets the correct behavior automatically, rather than depending on everyone who ever calls this function remembering an undocumented precondition.
+5. **Why "last updated X minutes ago" needs a real timestamp, not a boolean** — `minutes_since_update` in `/current` is computed from the actual latest data timestamp, not "did the last ingest job succeed." A dashboard that shows "live" based on job success can lie confidently right up until the moment the upstream API silently stops returning fresh data.
+
+**What's left / open:**
+- No caching/rate-limiting on the API yet — fine for local/portfolio use, worth a mention as a known gap for the "what you'd do with more time" section of the final README, not worth building now for a demo-scale audience.
+- CORS is wide open (`allow_origins=["*"]`) — reasonable for a public read-only API with no auth, but should be tightened to the real deployed frontend origin once that URL exists (Phase 6).
+- Only `lightgbm` forecasts are stored/served live (not naive/Prophet) — intentional, since `model_accuracy` already carries the full comparison story for the accuracy chart, and storing three live forecast curves per hour per region isn't needed for anything the dashboard actually shows.
+
+---
+
+## Phase 5b — React dashboard, built from a user-provided mockup
+
+**What's built and verified live:**
+- User supplied a finished visual design made with a design tool ("Claude Design"), exported as `Prometheus Grid Ambient.dc.html` plus a runtime (`support.js`) and an earlier set of design explorations (`DESIGN.md`, alternate aesthetics). Read through the whole export rather than skimming — the file encodes a complete design system (colors, typography scale, spacing, component conventions), not just one screen.
+- **The mockup was a static visual spec with fabricated data** — a fictional grid-frequency reading in Hz, fictional real-time $/MWh pricing, and a fake geographic "grid topology" node map with made-up substation names. None of that data exists in this project (no frequency sensor feed, no wholesale pricing ingestion, no geographic topology data). Rather than build convincing-looking fake widgets, each was replaced with something real:
+  - "Grid Stability (Hz)" → **Grid Status** (real, from the alert system: NOMINAL/ELEVATED/CRITICAL)
+  - "Real-Time Price ($/MWh)" → **Temperature** (real, from `/current`)
+  - "Grid Topology" node map → **Generation Mix** donut (real, new `/​{region}/generation-mix` endpoint, built specifically for this)
+  - Added a **Model Comparison** chart and **Predictions vs. Outcomes** table — both explicitly required by the original brief, absent from the mockup, now real (`/accuracy`, `/predictions-history`)
+- Ported the mockup's animated WebGL "domain-warping" shader background as a real React component (`GridAmbientBackground.jsx`) — and made it functionally meaningful rather than purely decorative: it's tinted live by the region's actual current alert level (cyan=nominal, amber=elevated, rose=critical), not a design-tool toggle.
+- Full region switching (CAISO/ERCOT/PJM) — every panel re-fetches and re-renders on tab change, confirmed by screenshotting all three regions.
+- Stack: Vite + React + Recharts, proxying `/api/*` to the FastAPI backend in dev.
+
+**Real bugs found via actual browser screenshots, not just code review** (screenshots are what surfaced all three):
+1. **Region tabs showed EIA's internal codes** (`CISO`, `ERCO`) instead of the names anyone actually recognizes (`CAISO`, `ERCOT`) — both in the frontend header and in generated alert text server-side. Fixed with a small display-label mapping in both places (`SHORT_LABELS`), keeping `region_code` as the real identifier everywhere it's used as one.
+2. **Timestamps rendered in the browser's local timezone, not the grid region's** — the exact same class of bug already caught twice in the backend (Prophet's seasonality, feature engineering), now recurring in the frontend. A dashboard for a Texas grid operator showing times in whatever timezone the browser happens to be in is wrong for the same underlying reason it was wrong in the forecasting code. Fixed with a shared `formatTime`/`formatDateTime` utility that always takes an explicit region timezone.
+3. **Generation mix showed solar at -0.3%** — investigated before assuming it was a bug: confirmed via direct SQL that EIA's raw data really does report small negative solar generation overnight (self-consumption slightly exceeding zero output — the same category of real EIA quirk as the PJM data corruption found in Phase 4, just far more benign). A pie chart can't render a negative slice regardless, so it's floored at 0 for display only, with a visible note rather than silently hiding the real signed value.
+4. Model comparison chart was clipping its 4th bar off the bottom of a too-short fixed-height panel — a plain layout bug, fixed by sizing the panel to fit its content.
+
+**Decisions made and why:**
+- **Chose Recharts** over Chart.js (both pre-approved by the original brief) — more idiomatic for React (declarative components vs. an imperative canvas API), composes cleanly with the mockup's exact styling via inline theming.
+- **Batch-scored data only, no client-side model inference** — the frontend is a pure consumer of the Phase 5a API; it has no knowledge of how a forecast or alert was produced, which is the correct side of the service boundary for a dashboard.
+- **Verified visually, not just "it compiles"** — used Playwright to actually launch the dev server and screenshot the rendered page (twice: once to catch the first round of bugs, again after fixing them), rather than trusting that matching CSS values to the mockup's source would look right. It didn't, the first time — the model-comparison clipping bug wouldn't have been caught by reading the code.
+
+**What you should understand now (interview-ready):**
+1. **A visual mockup is a spec for layout and feel, not a spec for what data exists** — treating "the mockup shows a number here" as license to display a fabricated number would have quietly undermined the entire project's honesty premise. Every widget's data source needs the same scrutiny whether it came from a design tool or from your own head.
+2. **Screenshots catch a different class of bug than code review** — the timezone bug, the negative-solar display, and the clipped chart were all invisible reading the source; each needed the rendered page to notice. "It compiles and the types match" is not "it's correct."
+3. **The same bug can recur across layers** — the UTC-vs-local-time mistake happened once in Prophet's seasonality (Phase 3), and independently again in the frontend's date formatting (Phase 5), because it's a property of the *problem domain* (grid behavior is inherently local-clock-relative), not a one-off coding slip. Recognizing "this is the same category of bug as before" is a different skill than just fixing each instance.
+4. **Making decoration functional beats making it merely accurate** — the ambient background could have just been "a nice animation" (matching the mockup) or "correctly showing nominal/elevated/critical" (matching real data). Doing the latter turns pure visual flair into another real-time indicator, at zero extra cost once the alert-level plumbing already exists.
+5. **Investigate before you fix — a weird number might be correct** — the instinct on seeing "-0.3%" should not be "that's obviously a bug, clamp it," it should be "why would this be negative, and is that itself informative." The EIA self-consumption explanation is more useful on the dashboard (as a note) than a silently-clamped 0.0% would have been.
+
+**What's left / open:**
+- Sidebar nav (Analysis/Alerts/Docs) is visual-only — only Dashboard is a real route, matching what the brief actually asked for; not pretending those pages exist.
+- No loading skeletons/spinners — panels just show their empty-state text until data arrives. Fine for a portfolio demo, worth polishing for Phase 6.
+- The "Export Data" button now does something real (client-side CSV export of the predictions-history table) rather than being purely decorative, but only covers that one table — could reasonably extend to other panels later.
+- Still running against local dev servers (Vite dev + uvicorn, not a production build) — Phase 6 covers actually deploying both.

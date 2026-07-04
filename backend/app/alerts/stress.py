@@ -7,6 +7,10 @@ WATCH_PERCENTILE = 95
 WARNING_PERCENTILE = 99
 SIMILAR_EVENT_EXCLUSION_WINDOW = pd.Timedelta(hours=48)
 
+# EIA's respondent codes aren't the names anyone recognizes ("ERCO" vs "ERCOT") — used only
+# for human-readable alert text, not as an identifier (StressAlert.region_code stays the real code).
+SHORT_LABELS = {"CISO": "CAISO", "ERCO": "ERCOT", "PJM": "PJM"}
+
 
 @dataclass
 class SimilarEvent:
@@ -121,12 +125,13 @@ def _render_explanation(
     level: str, rank: float, forecasted_temperature_c: float | None, typical_temperature_c: float | None,
     day_type: str, similar_event: SimilarEvent | None,
 ) -> str:
+    label = SHORT_LABELS.get(region_code, region_code)
     if level == "normal":
-        return f"{region_code}: forecasted demand {forecasted_demand_mwh:,.0f} MWh — within normal range."
+        return f"{label}: forecasted demand {forecasted_demand_mwh:,.0f} MWh — within normal range."
 
     target_local = target_time.tz_convert(timezone)
     parts = [
-        f"{level.upper()}: {region_code} forecasted demand {forecasted_demand_mwh:,.0f} MWh at "
+        f"{level.upper()}: {label} forecasted demand {forecasted_demand_mwh:,.0f} MWh at "
         f"{target_local:%Y-%m-%d %H:%M %Z}, ranking in the top {100 - rank:.1f}% of hours observed "
         f"for this region since 2019."
     ]

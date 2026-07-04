@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from app.db.session import close_pool, get_connection
 from app.forecasting.backtest import summarize, summarize_by_horizon, walk_forward_backtest
 from app.forecasting.data import load_demand_series, load_weather_series
 from app.forecasting.metrics import mape
@@ -14,6 +15,24 @@ from app.logging_config import configure_logging
 from app.regions import REGIONS
 
 logger = logging.getLogger(__name__)
+
+INSERT_ACCURACY = """
+    INSERT INTO model_accuracy
+        (region_code, model_name, test_start, test_end, mape, mae, rmse, n_forecasts)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+"""
+
+
+def store_accuracy(region_code: str, test_start: pd.Timestamp, test_end: pd.Timestamp, summaries: list[dict]) -> None:
+    rows = [
+        (region_code, s["model"], test_start, test_end, s["mape"], s["mae"], s["rmse"], s["n_forecasts"])
+        for s in summaries
+    ]
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.executemany(INSERT_ACCURACY, rows)
+        conn.commit()
+    logger.info("Stored %d model_accuracy rows for %s", len(rows), region_code)
 
 
 def eia_forecast_accuracy(demand_df: pd.DataFrame, test_start: pd.Timestamp, test_end: pd.Timestamp) -> dict:
@@ -38,6 +57,7 @@ def main() -> None:
 
     demand_df = load_demand_series(args.region)
     temperature = load_weather_series(args.region)
+    close_pool()
     demand = demand_df["demand_mwh"]
 
     test_end = demand.index.max() - pd.Timedelta(hours=args.horizon)
@@ -90,6 +110,9 @@ def main() -> None:
     prophet_results.to_csv("reports/backtest_prophet.csv", index=False)
     lgbm_results.to_csv("reports/backtest_lightgbm.csv", index=False)
     logger.info("Wrote reports/backtest_{naive,prophet,lightgbm}.csv")
+
+    store_accuracy(args.region, test_start, test_end, summaries)
+    close_pool()
 
 
 if __name__ == "__main__":

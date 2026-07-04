@@ -8,6 +8,7 @@ from app.clients.eia_client import EIAClient
 from app.clients.weather_client import WeatherClient
 from app.config import get_settings
 from app.db.session import get_connection
+from app.forecasting.score import score_all_regions
 from app.ingestion.ingest import ensure_region_row, ingest_demand, ingest_generation_mix, ingest_weather_recent
 from app.logging_config import configure_logging
 from app.regions import REGIONS
@@ -34,6 +35,10 @@ def run_hourly_ingest() -> None:
                 ingest_weather_recent(conn, weather, region_code, past_days=LOOKBACK_DAYS)
             except Exception:
                 logger.exception("Hourly ingest failed for region %s", region_code)
+
+    # Separate step, separate connection: scoring reads back what ingestion just wrote,
+    # so it must run after ingestion commits, not inside the same transaction.
+    score_all_regions()
 
 
 def main() -> None:

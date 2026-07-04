@@ -1,0 +1,53 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: #141518;
+  color: #e4e6ea;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+@keyframes promPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .45; transform: scale(1.25); }
+}
+
+.prom-scroll::-webkit-scrollbar { width: 5px; height: 5px; }
+.prom-scroll::-webkit-scrollbar-thumb { background: #3c494c; border-radius: 10px; }
+.prom-scroll::-webkit-scrollbar-track { background: transparent; }
+
+.label-caps {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.data-mono {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.panel {
+  background: rgba(23,24,28,0.78);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(201,203,209,0.08);
+  border-radius: 6px;
+}
+
+.pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  animation: promPulse 2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
