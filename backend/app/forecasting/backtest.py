@@ -33,7 +33,12 @@ def walk_forward_backtest(
 
         future_index = pd.date_range(origin + pd.Timedelta(hours=1), periods=horizon, freq="h")
         temperature_future = temperature.reindex(future_index)
-        predicted = forecaster.predict(origin, horizon, temperature_future=temperature_future)
+        predicted = forecaster.predict(
+            origin, horizon,
+            demand_history=demand.loc[:origin],
+            temperature_history=temperature.loc[:origin],
+            temperature_future=temperature_future,
+        )
         actual = demand.reindex(future_index)
 
         for hours_ahead, t in enumerate(future_index, start=1):

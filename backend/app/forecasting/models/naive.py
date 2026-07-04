@@ -10,13 +10,19 @@ class SeasonalNaiveForecaster(Forecaster):
 
     def __init__(self, season_length: int = 168) -> None:
         self.season_length = season_length
-        self._history: pd.Series | None = None
 
     def fit(self, demand: pd.Series, temperature: pd.Series) -> None:
-        self._history = demand
+        pass  # stateless: predict() always reads fresh demand_history directly
 
-    def predict(self, origin: pd.Timestamp, horizon: int, temperature_future: pd.Series | None = None) -> pd.Series:
+    def predict(
+        self,
+        origin: pd.Timestamp,
+        horizon: int,
+        demand_history: pd.Series,
+        temperature_history: pd.Series,
+        temperature_future: pd.Series | None = None,
+    ) -> pd.Series:
         future_index = pd.date_range(origin + pd.Timedelta(hours=1), periods=horizon, freq="h")
         lookback_index = future_index - pd.Timedelta(hours=self.season_length)
-        values = self._history.reindex(lookback_index).to_numpy()
+        values = demand_history.reindex(lookback_index).to_numpy()
         return pd.Series(values, index=future_index)
