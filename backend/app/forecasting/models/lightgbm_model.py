@@ -39,8 +39,13 @@ class LightGBMForecaster(Forecaster):
             raise ValueError("LightGBMForecaster requires temperature_future for the forecast window")
 
         # temperature_history only needs to run through `origin`; future target-time
-        # temperature comes from temperature_future (perfect-foresight, same as Prophet).
+        # temperature comes from temperature_future (perfect-foresight in backtests, a real
+        # forecast in live scoring). Callers aren't guaranteed to pre-trim temperature_future
+        # to start strictly after origin (e.g. a raw weather-API pull starts at local
+        # midnight, not at `origin`), so de-dupe defensively, preferring the actual
+        # observation over the forecast for any timestamp both series contain.
         temperature_full = pd.concat([temperature_history, temperature_future])
+        temperature_full = temperature_full[~temperature_full.index.duplicated(keep="first")].sort_index()
         panel = build_feature_panel(
             demand_history, temperature_full, timezone=self._timezone,
             horizons=range(1, horizon + 1), origins=pd.DatetimeIndex([origin]),
