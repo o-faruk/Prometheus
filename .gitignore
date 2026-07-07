@@ -8,3 +8,5 @@ __pycache__/
 node_modules/
 dist/
 backend/reports/
+.vscode/
+PRIVATE_TODO.md

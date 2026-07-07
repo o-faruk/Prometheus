@@ -105,18 +105,6 @@ confirmed, and exactly the kind of claim this project tries not to overstate.
 Full phase-by-phase build log — every design decision, bug found, and what I learned from each —
 is in [`NOTES.md`](NOTES.md).
 
-## What I'd do with more time
-
-- Source a real historical forecast-vs-actual weather dataset to remove the perfect-foresight
-  assumption from backtesting, not just from live scoring.
-- Hyperparameter-tune LightGBM via proper time-series cross-validation (current parameters are
-  reasonable defaults, not tuned).
-- Integrate EIA-860 generator capacity data for a literal "% of capacity" stress framing, instead
-  of the current historical-percentile proxy.
-- Weight `find_similar_historical_event`'s matching by day-of-year proximity in addition to
-  temperature, so comparisons don't cross seasons as readily.
-- Add a fourth region to further test whether the model comparison story generalizes.
-
 ## Technical debt, honestly
 
 - Perfect-foresight temperature in backtesting (above) is the biggest gap between reported and
