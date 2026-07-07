@@ -1,7 +1,5 @@
 import { colors, fonts } from '../theme';
 
-const NAV_ITEMS = ['DASHBOARD', 'ANALYSIS', 'ALERTS', 'DOCS'];
-
 export default function Sidebar({ onExport }) {
   return (
     <aside
@@ -27,36 +25,29 @@ export default function Sidebar({ onExport }) {
         </div>
       </div>
       <nav style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
-        {NAV_ITEMS.map((item) => {
-          const active = item === 'DASHBOARD';
-          return (
-            <div
-              key={item}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 12,
-                padding: '9px 14px',
-                borderRadius: 6,
-                background: active ? '#d2d5db' : 'transparent',
-                color: active ? '#17181c' : colors.textLabel,
-                fontWeight: active ? 700 : 400,
-                opacity: active ? 1 : 0.55,
-              }}
-            >
-              <span
-                style={{
-                  width: 14,
-                  height: 14,
-                  borderRadius: 3,
-                  border: '2px solid currentColor',
-                  display: 'inline-block',
-                }}
-              />
-              <span className="label-caps">{item}</span>
-            </div>
-          );
-        })}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            padding: '9px 14px',
+            borderRadius: 6,
+            background: '#d2d5db',
+            color: '#17181c',
+            fontWeight: 700,
+          }}
+        >
+          <span
+            style={{
+              width: 14,
+              height: 14,
+              borderRadius: 3,
+              border: '2px solid currentColor',
+              display: 'inline-block',
+            }}
+          />
+          <span className="label-caps">DASHBOARD</span>
+        </div>
       </nav>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12, borderTop: `1px solid ${colors.hairline}`, paddingTop: 20 }}>
         <button
